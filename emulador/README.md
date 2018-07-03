@@ -1,3 +1,9 @@
+Advancedcarrier
+http://advancedcarrier.com
+Emulador modificado por Advancedcarrier.
+-Cliente compatibilizado con emulador free
+Contrata tu host en cualquiera de nuestras empresas para mas informacion entra a nuestra web.
+
 rAthena
 =======
 
