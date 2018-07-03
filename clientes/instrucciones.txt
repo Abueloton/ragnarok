@@ -1,0 +1,12 @@
+Descargue el cliente en su escritorio, descomprimalo.
+Descargue la herramientas  GRF Builder   Descargue en www.caoshost.com/dl.php?type=d&id=43
+
+Descomprima el archivo ragnarok.grf
+
+Edite el archivo clientinfo.xml con su ip.
+
+Comprima nuevamente el archivo ragnaork.grf (Podra sustituir por el existente)
+
+Su cliente de conexion esta listo y acepta conexiones a su emulador.
+
+Gracias por su preferencia.
