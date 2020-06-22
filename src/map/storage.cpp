@@ -43,7 +43,7 @@ const char *storage_getName(uint8 id) {
 	if (storage_db && storage_count) {
 		int i;
 		for (i = 0; i < storage_count; i++) {
-			if (&storage_db[i] && storage_db[i].id == id && storage_db[i].name && storage_db[i].name[0] != '\0')
+			if (&storage_db[i] && storage_db[i].id == id && storage_db[i].name[0])
 				return storage_db[i].name;
 		}
 	}
@@ -210,6 +210,9 @@ static enum e_storage_add storage_canAddItem(struct s_storage *stor, int idx, st
 		return STORAGE_ADD_INVALID; // No item on that spot
 
 	if (amount < 1 || amount > items[idx].amount)
+		return STORAGE_ADD_INVALID;
+
+	if (itemdb_ishatched_egg(&items[idx]))
 		return STORAGE_ADD_INVALID;
 
 	if (!stor->state.put)
@@ -409,6 +412,10 @@ void storage_storageaddfromcart(struct map_session_data *sd, struct s_storage *s
 	enum e_storage_add result;
 	nullpo_retv(sd);
 
+	if (sd->state.prevend) {
+		return;
+	}
+
 	result = storage_canAddItem(stor, index, sd->cart.u.items_inventory, amount, MAX_CART);
 	if (result == STORAGE_ADD_INVALID)
 		return;
@@ -444,6 +451,10 @@ void storage_storagegettocart(struct map_session_data* sd, struct s_storage *sto
 
 	nullpo_retv(sd);
 
+	if (sd->state.prevend) {
+		return;
+	}
+
 	result = storage_canGetItem(stor, index, amount);
 	if (result != STORAGE_ADD_OK)
 		return;
@@ -464,9 +475,6 @@ void storage_storagesave(struct map_session_data *sd)
 {
 	nullpo_retv(sd);
 
-	if (!&sd->storage)
-		return;
-
 	intif_storage_save(sd, &sd->storage);
 }
 
@@ -479,8 +487,7 @@ void storage_storagesaved(struct map_session_data *sd)
 	if (!sd)
 		return;
 
-	if (&sd->storage)
-		sd->storage.dirty = false;
+	sd->storage.dirty = false;
 
 	if (sd->state.storage_flag == 1) {
 		sd->state.storage_flag = 0;
@@ -496,9 +503,6 @@ void storage_storagesaved(struct map_session_data *sd)
 void storage_storageclose(struct map_session_data *sd)
 {
 	nullpo_retv(sd);
-
-	if (!&sd->storage)
-		return;
 
 	if (sd->storage.dirty) {
 		if (save_settings&CHARSAVE_STORAGE)
@@ -524,9 +528,6 @@ void storage_storageclose(struct map_session_data *sd)
 void storage_storage_quit(struct map_session_data* sd, int flag)
 {
 	nullpo_retv(sd);
-
-	if (!&sd->storage)
-		return;
 
 	if (save_settings&CHARSAVE_STORAGE)
 		chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
@@ -613,7 +614,11 @@ char storage_guild_storageopen(struct map_session_data* sd)
 		return GSTORAGE_ALREADY_OPEN;
 	}
 
-	if((gstor = guild2storage2(sd->status.guild_id)) == NULL) {
+	if((gstor = guild2storage2(sd->status.guild_id)) == nullptr
+#ifdef OFFICIAL_GUILD_STORAGE
+		|| (gstor->max_amount != guild_checkskill(sd->guild, GD_GUILD_STORAGE) * 100)
+#endif
+	) {
 		intif_request_guild_storage(sd->status.account_id,sd->status.guild_id);
 		return GSTORAGE_OPEN;
 	}
@@ -631,6 +636,117 @@ char storage_guild_storageopen(struct map_session_data* sd)
 	clif_updatestorageamount(sd, gstor->amount, gstor->max_amount);
 
 	return GSTORAGE_OPEN;
+}
+
+void storage_guild_log( struct map_session_data* sd, struct item* item, int16 amount ){
+	int i;
+	SqlStmt* stmt = SqlStmt_Malloc(mmysql_handle);
+	StringBuf buf;
+	StringBuf_Init(&buf);
+
+	StringBuf_Printf(&buf, "INSERT INTO `%s` (`time`, `guild_id`, `char_id`, `name`, `nameid`, `amount`, `identify`, `refine`, `attribute`, `unique_id`, `bound`", guild_storage_log_table);
+	for (i = 0; i < MAX_SLOTS; ++i)
+		StringBuf_Printf(&buf, ", `card%d`", i);
+	for (i = 0; i < MAX_ITEM_RDM_OPT; ++i) {
+		StringBuf_Printf(&buf, ", `option_id%d`", i);
+		StringBuf_Printf(&buf, ", `option_val%d`", i);
+		StringBuf_Printf(&buf, ", `option_parm%d`", i);
+	}
+	StringBuf_Printf(&buf, ") VALUES(NOW(),'%u','%u', '%s', '%d', '%d','%d','%d','%d','%" PRIu64 "','%d'",
+		sd->status.guild_id, sd->status.char_id, sd->status.name, item->nameid, amount, item->identify, item->refine,item->attribute, item->unique_id, item->bound);
+
+	for (i = 0; i < MAX_SLOTS; i++)
+		StringBuf_Printf(&buf, ",'%d'", item->card[i]);
+	for (i = 0; i < MAX_ITEM_RDM_OPT; i++)
+		StringBuf_Printf(&buf, ",'%d','%d','%d'", item->option[i].id, item->option[i].value, item->option[i].param);
+	StringBuf_Printf(&buf, ")");
+
+	if (SQL_SUCCESS != SqlStmt_PrepareStr(stmt, StringBuf_Value(&buf)) || SQL_SUCCESS != SqlStmt_Execute(stmt))
+		SqlStmt_ShowDebug(stmt);
+
+	SqlStmt_Free(stmt);
+	StringBuf_Destroy(&buf);
+}
+
+enum e_guild_storage_log storage_guild_log_read_sub( struct map_session_data* sd, std::vector<struct guild_log_entry>& log, uint32 max ){
+	StringBuf buf;
+	int j;
+
+	StringBuf_Init(&buf);
+
+	StringBuf_AppendStr(&buf, "SELECT `id`, `time`, `name`, `amount`");
+	StringBuf_AppendStr(&buf, " , `nameid`, `identify`, `refine`, `attribute`, `expire_time`, `bound`, `unique_id`");
+	for (j = 0; j < MAX_SLOTS; ++j)
+		StringBuf_Printf(&buf, ", `card%d`", j);
+	for (j = 0; j < MAX_ITEM_RDM_OPT; ++j) {
+		StringBuf_Printf(&buf, ", `option_id%d`", j);
+		StringBuf_Printf(&buf, ", `option_val%d`", j);
+		StringBuf_Printf(&buf, ", `option_parm%d`", j);
+	}
+	StringBuf_Printf(&buf, " FROM `%s` WHERE `guild_id`='%u'", guild_storage_log_table, sd->status.guild_id );
+	StringBuf_Printf(&buf, " ORDER BY `time` DESC LIMIT %u", max);
+
+	SqlStmt* stmt = SqlStmt_Malloc(mmysql_handle);
+	if( SQL_ERROR == SqlStmt_PrepareStr(stmt, StringBuf_Value(&buf)) ||
+		SQL_ERROR == SqlStmt_Execute(stmt) )
+	{
+		SqlStmt_ShowDebug(stmt);
+		SqlStmt_Free(stmt);
+		StringBuf_Destroy(&buf);
+
+		return GUILDSTORAGE_LOG_FAILED;
+	}
+
+	struct guild_log_entry entry;
+
+	// General data
+	SqlStmt_BindColumn(stmt, 0, SQLDT_UINT,      &entry.id,               0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 1, SQLDT_STRING,    &entry.time, sizeof(entry.time), NULL, NULL);
+	SqlStmt_BindColumn(stmt, 2, SQLDT_STRING,    &entry.name, sizeof(entry.name), NULL, NULL);
+	SqlStmt_BindColumn(stmt, 3, SQLDT_SHORT,     &entry.amount,           0, NULL, NULL);
+
+	// Item data
+	SqlStmt_BindColumn(stmt, 4, SQLDT_USHORT,    &entry.item.nameid,      0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 5, SQLDT_CHAR,      &entry.item.identify,    0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 6, SQLDT_CHAR,      &entry.item.refine,      0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 7, SQLDT_CHAR,      &entry.item.attribute,   0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 8, SQLDT_UINT,      &entry.item.expire_time, 0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 9, SQLDT_UINT,      &entry.item.bound,       0, NULL, NULL);
+	SqlStmt_BindColumn(stmt, 10, SQLDT_UINT64,    &entry.item.unique_id,   0, NULL, NULL);
+	for( j = 0; j < MAX_SLOTS; ++j )
+		SqlStmt_BindColumn(stmt, 11+j, SQLDT_USHORT, &entry.item.card[j], 0, NULL, NULL);
+	for( j = 0; j < MAX_ITEM_RDM_OPT; ++j ) {
+		SqlStmt_BindColumn(stmt, 11+MAX_SLOTS+j*3, SQLDT_SHORT, &entry.item.option[j].id, 0, NULL, NULL);
+		SqlStmt_BindColumn(stmt, 11+MAX_SLOTS+j*3+1, SQLDT_SHORT, &entry.item.option[j].value, 0, NULL, NULL);
+		SqlStmt_BindColumn(stmt, 11+MAX_SLOTS+j*3+2, SQLDT_CHAR, &entry.item.option[j].param, 0, NULL, NULL);
+	}
+
+	log.reserve(max);
+
+	while( SQL_SUCCESS == SqlStmt_NextRow(stmt) ){
+		log.push_back( entry );
+	}
+
+	Sql_FreeResult(mmysql_handle);
+	StringBuf_Destroy(&buf);
+	SqlStmt_Free(stmt);
+
+	if( log.empty() ){
+		return GUILDSTORAGE_LOG_EMPTY;
+	}
+
+	return GUILDSTORAGE_LOG_FINAL_SUCCESS;
+}
+
+enum e_guild_storage_log storage_guild_log_read( struct map_session_data* sd ){
+	std::vector<struct guild_log_entry> log;
+
+	// ( 65535(maximum packet size) - 8(header) ) / 83 (entry size) = 789 (-1 for safety)
+	enum e_guild_storage_log ret = storage_guild_log_read_sub( sd, log, 788 );
+
+	clif_guild_storage_log( sd, log, ret );
+
+	return ret;
 }
 
 /**
@@ -677,6 +793,9 @@ bool storage_guild_additem(struct map_session_data* sd, struct s_storage* stor, 
 				stor->u.items_guild[i].amount += amount;
 				clif_storageitemadded(sd,&stor->u.items_guild[i],i,amount);
 				stor->dirty = true;
+
+				storage_guild_log( sd, &stor->u.items_guild[i], amount );
+
 				return true;
 			}
 		}
@@ -693,6 +812,9 @@ bool storage_guild_additem(struct map_session_data* sd, struct s_storage* stor, 
 	clif_storageitemadded(sd,&stor->u.items_guild[i],i,amount);
 	clif_updatestorageamount(sd, stor->amount, stor->max_amount);
 	stor->dirty = true;
+
+	storage_guild_log( sd, &stor->u.items_guild[i], amount );
+
 	return true;
 }
 
@@ -757,6 +879,9 @@ bool storage_guild_delitem(struct map_session_data* sd, struct s_storage* stor, 
 
 	if(!stor->u.items_guild[n].nameid || stor->u.items_guild[n].amount < amount)
 		return false;
+
+	// Log before removing it
+	storage_guild_log( sd, &stor->u.items_guild[n], -amount );
 
 	stor->u.items_guild[n].amount -= amount;
 
@@ -1019,9 +1144,6 @@ void storage_guild_storage_quit(struct map_session_data* sd, int flag)
 void storage_premiumStorage_open(struct map_session_data *sd) {
 	nullpo_retv(sd);
 
-	if (!&sd->premiumStorage)
-		return;
-
 	sd->state.storage_flag = 3;
 	storage_sortitem(sd->premiumStorage.u.items_storage, sd->premiumStorage.max_amount);
 	clif_storagelist(sd, sd->premiumStorage.u.items_storage, sd->premiumStorage.max_amount, storage_getName(sd->premiumStorage.stor_id));
@@ -1053,7 +1175,7 @@ bool storage_premiumStorage_load(struct map_session_data *sd, uint8 num, uint8 m
 		return 0;
 	}
 
-	if (!&sd->premiumStorage || sd->premiumStorage.stor_id != num)
+	if (sd->premiumStorage.stor_id != num)
 		return intif_storage_request(sd, TABLE_STORAGE, num, mode);
 	else {
 		sd->premiumStorage.state.put = (mode&STOR_MODE_PUT) ? 1 : 0;
@@ -1071,9 +1193,6 @@ bool storage_premiumStorage_load(struct map_session_data *sd, uint8 num, uint8 m
 void storage_premiumStorage_save(struct map_session_data *sd) {
 	nullpo_retv(sd);
 
-	if (!&sd->premiumStorage)
-		return;
-
 	intif_storage_save(sd, &sd->premiumStorage);
 }
 
@@ -1085,9 +1204,8 @@ void storage_premiumStorage_saved(struct map_session_data *sd) {
 	if (!sd)
 		return;
 
-	if (&sd->premiumStorage) {
-		sd->premiumStorage.dirty = 0;
-	}
+	sd->premiumStorage.dirty = 0;
+
 	if (sd->state.storage_flag == 3) {
 		sd->state.storage_flag = 0;
 		clif_storageclose(sd);
@@ -1101,9 +1219,6 @@ void storage_premiumStorage_saved(struct map_session_data *sd) {
  **/
 void storage_premiumStorage_close(struct map_session_data *sd) {
 	nullpo_retv(sd);
-
-	if (!&sd->premiumStorage)
-		return;
 
 	if (sd->premiumStorage.dirty) {
 		if (save_settings&CHARSAVE_STORAGE)
@@ -1126,9 +1241,6 @@ void storage_premiumStorage_close(struct map_session_data *sd) {
  **/
 void storage_premiumStorage_quit(struct map_session_data *sd) {
 	nullpo_retv(sd);
-
-	if (!&sd->premiumStorage)
-		return;
 
 	if (save_settings&CHARSAVE_STORAGE)
 		chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);

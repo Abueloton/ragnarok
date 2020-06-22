@@ -32,7 +32,7 @@ static DBMap* party_db; // int party_id -> struct party_data* (releases data)
 static DBMap* party_booking_db; // uint32 char_id -> struct party_booking_ad_info* (releases data) // Party Booking [Spiria]
 static unsigned long party_booking_nextid = 1;
 
-int party_send_xy_timer(int tid, unsigned int tick, int id, intptr_t data);
+TIMER_FUNC(party_send_xy_timer);
 int party_create_byscript;
 
 /*==========================================
@@ -675,11 +675,11 @@ int party_member_withdraw(int party_id, uint32 account_id, uint32 char_id, char 
 		//TODO: hp bars should be cleared too
 
 		if( p->instance_id ) {
-			int16 m = sd->bl.m;
+			struct map_data *mapdata = map_getmapdata(sd->bl.m);
 
-			if( map[m].instance_id ) { // User was on the instance map
-				if( map[m].save.map )
-					pc_setpos(sd, map[m].save.map, map[m].save.x, map[m].save.y, CLR_TELEPORT);
+			if( mapdata->instance_id ) { // User was on the instance map
+				if( mapdata->save.map )
+					pc_setpos(sd, mapdata->save.map, mapdata->save.x, mapdata->save.y, CLR_TELEPORT);
 				else
 					pc_setpos(sd, sd->status.save_point.map, sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT);
 			}
@@ -791,7 +791,7 @@ int party_changeleader(struct map_session_data *sd, struct map_session_data *tsd
 			return -3;
 		}
 
-		if ( map[sd->bl.m].flag.partylock ) {
+		if ( map_getmapflag(sd->bl.m, MF_PARTYLOCK) ) {
 			clif_displaymessage(sd->fd, msg_txt(sd,287));
 			return 0;
 		}
@@ -1000,7 +1000,7 @@ int party_skill_check(struct map_session_data *sd, int party_id, uint16 skill_id
 				break;
 			case MO_COMBOFINISH: //Increase Counter rate of Star Gladiators
 				if((p_sd->class_&MAPID_UPPERMASK) == MAPID_STAR_GLADIATOR
-					&& sd->sc.data[SC_READYCOUNTER]
+					&& p_sd->sc.data[SC_READYCOUNTER]
 					&& pc_checkskill(p_sd,SG_FRIEND)) {
 					sc_start4(&p_sd->bl,&p_sd->bl,SC_SKILLRATE_UP,100,TK_COUNTER,
 						50+50*pc_checkskill(p_sd,SG_FRIEND), //+100/150/200% rate
@@ -1013,8 +1013,7 @@ int party_skill_check(struct map_session_data *sd, int party_id, uint16 skill_id
 	return 0;
 }
 
-int party_send_xy_timer(int tid, unsigned int tick, int id, intptr_t data)
-{
+TIMER_FUNC(party_send_xy_timer){
 	struct party_data* p;
 
 	DBIterator *iter = db_iterator(party_db);
@@ -1090,7 +1089,7 @@ void party_exp_share(struct party_data* p, struct block_list* src, unsigned int 
 
 	// count the number of players eligible for exp sharing
 	for (i = c = 0; i < MAX_PARTY; i++) {
-		if( (sd[c] = p->data[i].sd) == NULL || sd[c]->bl.m != src->m || pc_isdead(sd[c]) || (battle_config.idle_no_share && pc_isidle(sd[c])) )
+		if( (sd[c] = p->data[i].sd) == NULL || sd[c]->bl.m != src->m || pc_isdead(sd[c]) || (battle_config.idle_no_share && pc_isidle_party(sd[c])) )
 			continue;
 		c++;
 	}
@@ -1152,7 +1151,7 @@ int party_share_loot(struct party_data* p, struct map_session_data* sd, struct i
 				if (i >= MAX_PARTY)
 					i = 0;	// reset counter to 1st person in party so it'll stop when it reaches "itemc"
 
-				if( (psd = p->data[i].sd) == NULL || sd->bl.m != psd->bl.m || pc_isdead(psd) || (battle_config.idle_no_share && pc_isidle(psd)) )
+				if( (psd = p->data[i].sd) == NULL || sd->bl.m != psd->bl.m || pc_isdead(psd) || (battle_config.idle_no_share && pc_isidle_party(psd)) )
 					continue;
 
 				if (pc_additem(psd,item,item->amount,LOG_TYPE_PICKDROP_PLAYER))
@@ -1169,7 +1168,7 @@ int party_share_loot(struct party_data* p, struct map_session_data* sd, struct i
 
 			//Collect pick candidates
 			for (i = 0; i < MAX_PARTY; i++) {
-				if( (psd[count] = p->data[i].sd) == NULL || psd[count]->bl.m != sd->bl.m || pc_isdead(psd[count]) || (battle_config.idle_no_share && pc_isidle(psd[count])) )
+				if( (psd[count] = p->data[i].sd) == NULL || psd[count]->bl.m != sd->bl.m || pc_isdead(psd[count]) || (battle_config.idle_no_share && pc_isidle_party(psd[count])) )
 					continue;
 
 				count++;
@@ -1223,7 +1222,7 @@ int party_sub_count(struct block_list *bl, va_list ap)
 	if (sd->state.autotrade)
 		return 0;
 
-	if (battle_config.idle_no_share && pc_isidle(sd))
+	if (battle_config.idle_no_share && pc_isidle_party(sd))
 		return 0;
 
 	return 1;
@@ -1246,6 +1245,35 @@ int party_sub_count_class(struct block_list *bl, va_list ap)
 
 	if( (sd->class_&mask) != mapid_class )
 		return 0;
+
+	return 1;
+}
+
+/**
+ * Special check for Royal Guard's Banding skill.
+ * @param bl: Object invoking the counter
+ * @param ap: List of parameters: Check Type
+ * @return 1 or total HP on success or 0 otherwise
+ */
+int party_sub_count_banding(struct block_list *bl, va_list ap)
+{
+	struct map_session_data *sd = (TBL_PC *)bl;
+	int type = va_arg(ap, int); // 0 = Banding Count, 1 = HP Check
+
+	if (sd->state.autotrade)
+		return 0;
+
+	if (battle_config.idle_no_share && pc_isidle_party(sd))
+		return 0;
+
+	if ((sd->class_&MAPID_THIRDMASK) != MAPID_ROYAL_GUARD)
+		return 0;
+
+	if (!sd->sc.data[SC_BANDING])
+		return 0;
+
+	if (type == 1)
+		return status_get_hp(bl);
 
 	return 1;
 }

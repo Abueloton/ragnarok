@@ -16,7 +16,7 @@
 #include "loginlog.hpp"
 
 // login sql settings
-static char   ipban_db_hostname[32] = "127.0.0.1";
+static char   ipban_db_hostname[64] = "127.0.0.1";
 static uint16 ipban_db_port = 3306;
 static char   ipban_db_username[32] = "ragnarok";
 static char   ipban_db_password[32] = "";
@@ -30,7 +30,7 @@ static int cleanup_timer_id = INVALID_TIMER;
 static bool ipban_inited = false;
 
 //early declaration
-int ipban_cleanup(int tid, unsigned int tick, int id, intptr_t data);
+TIMER_FUNC(ipban_cleanup);
 
 /**
  * Check if ip is in the active bans list.
@@ -96,11 +96,11 @@ void ipban_log(uint32 ip) {
  * @param data: unused
  * @return 0
  */
-int ipban_cleanup(int tid, unsigned int tick, int id, intptr_t data) {
+TIMER_FUNC(ipban_cleanup){
 	if( !login_config.ipban )
 		return 0;// ipban disabled
 
-	if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `ipbanlist` WHERE `rtime` <= NOW()") )
+	if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `%s` WHERE `rtime` <= NOW()", ipban_table) )
 		Sql_ShowDebug(sql_handle);
 
 	return 0;

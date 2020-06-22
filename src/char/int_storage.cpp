@@ -16,15 +16,7 @@
 
 #include "char.hpp"
 #include "inter.hpp"
-
-/**
- * Check if storage ID is valid
- * @param id: Storage ID
- * @return True if success or false on failure
- */
-bool inter_premiumStorage_exists(uint8 id) {
-	return interserv_config.storages.find(id) != interserv_config.storages.end();
-}
+#include "int_guild.hpp"
 
 /**
  * Get max storage amount
@@ -32,8 +24,12 @@ bool inter_premiumStorage_exists(uint8 id) {
  * @return Max amount
  */
 int inter_premiumStorage_getMax(uint8 id) {
-	if (inter_premiumStorage_exists(id))
-		return interserv_config.storages[id]->max_num;
+	std::shared_ptr<s_storage_table> storage = interServerDb.find( id );
+
+	if( storage != nullptr ){
+		return storage->max_num;
+	}
+
 	return MAX_STORAGE;
 }
 
@@ -43,8 +39,12 @@ int inter_premiumStorage_getMax(uint8 id) {
  * @return Table name
  */
 const char *inter_premiumStorage_getTableName(uint8 id) {
-	if (inter_premiumStorage_exists(id))
-		return interserv_config.storages[id]->table;
+	std::shared_ptr<s_storage_table> storage = interServerDb.find( id );
+
+	if( storage != nullptr ){
+		return storage->table;
+	}
+
 	return schema_config.storage_db;
 }
 
@@ -54,8 +54,12 @@ const char *inter_premiumStorage_getTableName(uint8 id) {
  * @return printable name
  */
 const char *inter_premiumStorage_getPrintableName(uint8 id) {
-	if (inter_premiumStorage_exists(id))
-		return interserv_config.storages[id]->name;
+	std::shared_ptr<s_storage_table> storage = interServerDb.find( id );
+
+	if( storage != nullptr ){
+		return storage->name;
+	}
+
 	return "Storage";
 }
 
@@ -135,7 +139,7 @@ bool storage_fromsql(uint32 account_id, struct s_storage* p)
 bool guild_storage_tosql(int guild_id, struct s_storage* p)
 {
 	//ShowInfo("Guild Storage has been saved (GID: %d)\n", guild_id);
-	return char_memitemdata_to_sql(p->u.items_guild, MAX_GUILD_STORAGE, guild_id, TABLE_GUILD_STORAGE, p->stor_id);
+	return char_memitemdata_to_sql(p->u.items_guild, inter_guild_storagemax(guild_id), guild_id, TABLE_GUILD_STORAGE, p->stor_id);
 }
 
 /**
@@ -146,12 +150,12 @@ bool guild_storage_tosql(int guild_id, struct s_storage* p)
  */
 bool guild_storage_fromsql(int guild_id, struct s_storage* p)
 {
-	return char_memitemdata_from_sql( p, MAX_GUILD_STORAGE, guild_id, TABLE_GUILD_STORAGE, p->stor_id );
+	return char_memitemdata_from_sql( p, inter_guild_storagemax(guild_id), guild_id, TABLE_GUILD_STORAGE, p->stor_id );
 }
 
 void inter_storage_checkDB(void) {
 	// Checking storage tables
-	for (auto storage_table : interserv_config.storages) {
+	for( auto storage_table : interServerDb ){
 		if (SQL_ERROR == Sql_Query(sql_handle, "SELECT  `id`,`account_id`,`nameid`,`amount`,`equip`,`identify`,`refine`,"
 			"`attribute`,`card0`,`card1`,`card2`,`card3`,`option_id0`,`option_val0`,`option_parm0`,`option_id1`,`option_val1`,`option_parm1`,"
 			"`option_id2`,`option_val2`,`option_parm2`,`option_id3`,`option_val3`,`option_parm3`,`option_id4`,`option_val4`,`option_parm4`,"
@@ -251,7 +255,7 @@ bool mapif_parse_SaveGuildStorage(int fd)
 
 	if( sizeof(struct s_storage) != len - 12 )
 	{
-		ShowError("inter storage: data size error %d != %d\n", sizeof(struct s_storage), len - 12);
+		ShowError("inter storage: data size error %" PRIuPTR " != %d\n", sizeof(struct s_storage), len - 12);
 	}
 	else
 	{
@@ -464,7 +468,7 @@ bool mapif_parse_itembound_retrieve(int fd)
  * @param entries Inventory/cart/storage entries
  * @param result
  */
-void mapif_storage_data_loaded(int fd, uint32 account_id, char type, struct s_storage entries, bool result) {
+void mapif_storage_data_loaded(int fd, uint32 account_id, char type, struct s_storage* entries, bool result) {
 	uint16 size = sizeof(struct s_storage) + 10;
 	
 	WFIFOHEAD(fd, size);
@@ -473,7 +477,7 @@ void mapif_storage_data_loaded(int fd, uint32 account_id, char type, struct s_st
 	WFIFOB(fd, 4) = type;
 	WFIFOL(fd, 5) = account_id;
 	WFIFOB(fd, 9) = result;
-	memcpy(WFIFOP(fd, 10), &entries, sizeof(struct s_storage));
+	memcpy(WFIFOP(fd, 10), entries, sizeof(struct s_storage));
 	WFIFOSET(fd, size);
 }
 
@@ -521,10 +525,11 @@ bool mapif_parse_StorageLoad(int fd) {
 	switch (type) {
 		case TABLE_INVENTORY: res = inventory_fromsql(cid, &stor); break;
 		case TABLE_STORAGE:
-			if (!inter_premiumStorage_exists(stor_id)) {
-				ShowError("Invalid storage with id %d\n", stor_id);
+			if( !interServerDb.exists( stor_id ) ){
+				ShowError( "Invalid storage with id %d\n", stor_id );
 				return false;
 			}
+
 			res = storage_fromsql(aid, &stor);
 			break;
 		case TABLE_CART:      res = cart_fromsql(cid, &stor);      break;
@@ -535,7 +540,7 @@ bool mapif_parse_StorageLoad(int fd) {
 	stor.state.put = (mode&STOR_MODE_PUT) ? 1 : 0;
 	stor.state.get = (mode&STOR_MODE_GET) ? 1 : 0;
 
-	mapif_storage_data_loaded(fd, aid, type, stor, res);
+	mapif_storage_data_loaded(fd, aid, type, &stor, res);
 	return true;
 }
 
@@ -560,10 +565,11 @@ bool mapif_parse_StorageSave(int fd) {
 	switch(type){
 		case TABLE_INVENTORY:	inventory_tosql(cid, &stor); break;
 		case TABLE_STORAGE:
-			if (!inter_premiumStorage_exists(stor.stor_id)) {
-				ShowError("Invalid storage with id %d\n", stor.stor_id);
+			if( !interServerDb.exists( stor.stor_id ) ){
+				ShowError( "Invalid storage with id %d\n", stor.stor_id );
 				return false;
 			}
+
 			storage_tosql(aid, &stor);
 			break;
 		case TABLE_CART:	cart_tosql(cid, &stor); break;

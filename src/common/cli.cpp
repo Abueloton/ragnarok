@@ -10,19 +10,19 @@
 #ifdef WIN32
 	#include <conio.h>
 #else
-	#include <sys/poll.h>
+	#include <poll.h>
 #endif
 
 #include "cbasetypes.hpp"
 #include "core.hpp"
 #include "showmsg.hpp"
+#include "timer.hpp"
 
 //map confs
 const char* MAP_CONF_NAME;
 const char* INTER_CONF_NAME;
 const char* LOG_CONF_NAME;
 const char* BATTLE_CONF_FILENAME;
-const char* ATCOMMAND_CONF_FILENAME;
 const char* SCRIPT_CONF_NAME;
 const char* GRF_PATH_FILENAME;
 //char confs
@@ -147,10 +147,6 @@ int cli_get_options(int argc, char ** argv) {
 					if (opt_has_next_value(arg, i, argc))
 						BATTLE_CONF_FILENAME = argv[++i];
 				}
-				else if (strcmp(arg, "atcommand-config") == 0) {
-					if (opt_has_next_value(arg, i, argc))
-						ATCOMMAND_CONF_FILENAME = argv[++i];
-				}
 				else if (strcmp(arg, "script-config") == 0) {
 					if (opt_has_next_value(arg, i, argc))
 						SCRIPT_CONF_NAME = argv[++i];
@@ -214,7 +210,7 @@ bool cli_hasevent(){
  * @param data: unused
  * @return 0
  */
-int parse_console_timer(int tid, unsigned int tick, int id, intptr_t data) {
+TIMER_FUNC(parse_console_timer){
 	char buf[MAX_CONSOLE_IN]; //max cmd atm is 63+63+63+3+3
 
 	memset(buf,0,MAX_CONSOLE_IN); //clear out buf

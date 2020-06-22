@@ -1,8 +1,8 @@
 // Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
 // For more information, see LICENCE in the main folder
 
-#ifndef _ACCOUNT_HPP_
-#define _ACCOUNT_HPP_
+#ifndef ACCOUNT_HPP
+#define ACCOUNT_HPP
 
 #include "../common/cbasetypes.hpp"
 #include "../common/mmo.hpp" // ACCOUNT_REG2_NUM
@@ -132,8 +132,7 @@ struct AccountDB {
 	AccountDBIterator* (*iterator)(AccountDB* self);
 };
 
-void mmo_send_global_accreg(AccountDB* self, int fd, int account_id, int char_id);
-void mmo_save_global_accreg(AccountDB* self, int fd, int account_id, int char_id);
+void mmo_send_global_accreg(AccountDB* self, int fd, uint32 account_id, uint32 char_id);
+void mmo_save_global_accreg(AccountDB* self, int fd, uint32 account_id, uint32 char_id);
 
-
-#endif /* _ACCOUNT_HPP_ */
+#endif /* ACCOUNT_HPP */

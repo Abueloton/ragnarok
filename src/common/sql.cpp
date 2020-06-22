@@ -205,8 +205,7 @@ int Sql_Ping(Sql* self)
 /// Wrapper function for Sql_Ping.
 ///
 /// @private
-static int Sql_P_KeepaliveTimer(int tid, unsigned int tick, int id, intptr_t data)
-{
+static TIMER_FUNC(Sql_P_KeepaliveTimer){
 	Sql* self = (Sql*)data;
 	ShowInfo("Pinging SQL server to keep connection alive...\n");
 	Sql_Ping(self);
@@ -565,7 +564,7 @@ static void Sql_P_ShowDebugMysqlFieldInfo(const char* prefix, enum enum_field_ty
 	switch( type )
 	{
 	default:
-		ShowDebug("%stype=%s%u, length=%d\n", prefix, sign, type, length);
+		ShowDebug("%stype=%s%u, length=%lu\n", prefix, sign, type, length);
 		return;
 #define SHOW_DEBUG_OF(x) case x: type_string = #x; break
 	SHOW_DEBUG_OF(MYSQL_TYPE_TINY);
@@ -589,7 +588,7 @@ static void Sql_P_ShowDebugMysqlFieldInfo(const char* prefix, enum enum_field_ty
 	SHOW_DEBUG_OF(MYSQL_TYPE_NULL);
 #undef SHOW_DEBUG_TYPE_OF
 	}
-	ShowDebug("%stype=%s%s, length=%d%s\n", prefix, sign, type_string, length, length_postfix);
+	ShowDebug("%stype=%s%s, length=%lu%s\n", prefix, sign, type_string, length, length_postfix);
 }
 
 
@@ -808,7 +807,7 @@ int SqlStmt_BindColumn(SqlStmt* self, size_t idx, enum SqlDataType buffer_type, 
 	{
 		if( buffer_len < 1 )
 		{
-			ShowDebug("SqlStmt_BindColumn: buffer_len(%d) is too small, no room for the nul-terminator\n", buffer_len);
+			ShowDebug("SqlStmt_BindColumn: buffer_len(%" PRIuPTR ") is too small, no room for the nul-terminator\n", buffer_len);
 			return SQL_ERROR;
 		}
 		--buffer_len;// nul-terminator
