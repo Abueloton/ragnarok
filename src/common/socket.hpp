@@ -4,7 +4,7 @@
 #ifndef SOCKET_HPP
 #define SOCKET_HPP
 
-#include "../config/core.hpp"
+#include <config/core.hpp>
 
 #ifdef WIN32
 	#include "winapi.hpp"
@@ -98,6 +98,7 @@ struct socket_data
 	size_t rdata_size, wdata_size;
 	size_t rdata_pos;
 	time_t rdata_tick; // time of last recv (for detecting timeouts); zero when timeout is disabled
+	time_t wdata_tick; // time of last send (for detecting timeouts);
 
 	RecvFunc func_recv;
 	SendFunc func_send;

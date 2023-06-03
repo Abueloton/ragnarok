@@ -4,11 +4,11 @@
 #ifndef MAPINDEX_HPP
 #define MAPINDEX_HPP
 
-#include "../common/mmo.hpp"
+#include "mmo.hpp"
 
 #define MAX_MAPINDEX 2000
 
-//Some definitions for the mayor city maps.
+//Some definitions for the major city maps.
 #define MAP_PRONTERA "prontera"
 #define MAP_GEFFEN "geffen"
 #define MAP_MORROC "morocc"
